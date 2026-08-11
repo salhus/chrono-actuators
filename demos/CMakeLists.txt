@@ -1,0 +1,2 @@
+add_executable(demo_ACT_scaffold demo_ACT_scaffold.cpp)
+target_link_libraries(demo_ACT_scaffold PRIVATE Chrono::actuators)
