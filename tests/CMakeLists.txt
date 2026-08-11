@@ -1,0 +1,3 @@
+add_executable(test_cache_roundtrip test_cache_roundtrip.cpp)
+target_link_libraries(test_cache_roundtrip PRIVATE Chrono::actuators)
+add_test(NAME chrono_actuators_cache_roundtrip COMMAND test_cache_roundtrip)

@@ -1,0 +1,9 @@
+#ifndef CH_CONFIG_ACTUATORS_H
+#define CH_CONFIG_ACTUATORS_H
+
+#include "chrono/ChConfig.h"
+
+#cmakedefine01 CHRONO_ACTUATORS_HAS_ROS
+#cmakedefine01 CHRONO_ACTUATORS_HAS_HIL
+
+#endif
