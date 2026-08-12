@@ -35,7 +35,7 @@ int main() {
 
     auto motor_link = chrono_types::make_shared<ChShaftsMotorLoad>();
     motor_link->Initialize(shaft1, shaft2);
-    sys.AddLink(motor_link);
+    sys.Add(motor_link);
 
     // Zero-state damper: zero-state model, safe for ChActuatorShaft.
     auto model = std::make_shared<LinearDamperModel>(0.05);
