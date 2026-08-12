@@ -47,9 +47,13 @@ namespace actuators {
 /// multibody system — no external sub-stepping, no stability issues with
 /// stiff electrical/hydraulic dynamics.
 ///
+/// Call Initialize() explicitly after construction and before adding this item
+/// to a ChSystem. This mirrors Chrono's ChHydraulicActuatorBase and avoids a
+/// virtual call to GetNumStates() during base-class construction.
+///
 /// Applied force/torque is extracted via EffortFromStates() after each
-/// accepted step and applied to body1 (along the line of action to body2)
-/// for the attached mode, or returned via GetEffort() for standalone use.
+/// accepted step and loaded into Chrono residuals for the attached mode, or
+/// returned via GetEffort() for standalone use.
 class ChApiActuators ChActuatorDynamics : public chrono::ChExternalDynamicsODE {
   public:
     /// Attached mode: actuator between two bodies.
@@ -73,6 +77,9 @@ class ChApiActuators ChActuatorDynamics : public chrono::ChExternalDynamicsODE {
 
     /// Standalone mode: set current actuator length and rate (co-simulation use).
     void SetActuatorLength(double length, double velocity);
+
+    /// Initialize the actuator after construction and before sys.Add(...).
+    void Initialize() override;
 
     /// Update frozen command for the current step.
     void FreezeCommand(const ActuatorCommand& command);
@@ -102,6 +109,19 @@ class ChApiActuators ChActuatorDynamics : public chrono::ChExternalDynamicsODE {
     void Update(double time, UpdateFlags update_flags) override;
 
   private:
+    void IntLoadResidual_F(const unsigned int off, ChVectorDynamic<>& R, const double c) override;
+
+    void VariablesFbLoadForces(double factor = 1) override;
+
+    struct GeometryState {
+        ChVector3d p1{0, 0, 0};
+        ChVector3d p2{0, 0, 0};
+        ChVector3d dir{1, 0, 0};
+        double     length{0.0};
+        double     rate{0.0};
+    };
+
+    GeometryState BuildGeometry() const;
     ActuatorState BuildState(double time) const;
 
     std::shared_ptr<ActuatorModel> model_;
@@ -120,6 +140,7 @@ class ChApiActuators ChActuatorDynamics : public chrono::ChExternalDynamicsODE {
     ActuatorCommand   command_;
     double            effort_{0.0};
     ActuatorTelemetry telemetry_;
+    ChVectorDynamic<> m_Qforce;
 };
 
 }  // namespace actuators

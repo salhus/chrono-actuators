@@ -52,6 +52,7 @@ int main() {
         ChVector3d(0, 0, 0),
         ChVector3d(0.5, 0, 0)
     );
+    dyn->Initialize();
     dyn->FreezeCommand(cmd);
     sys.Add(dyn);
 

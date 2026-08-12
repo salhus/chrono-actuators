@@ -36,9 +36,6 @@ ChActuatorDynamics::ChActuatorDynamics(std::shared_ptr<ActuatorModel> model,
     , attached_(true) {
     if (!model_)
         throw std::invalid_argument("ChActuatorDynamics: model must not be null");
-    if (model_->GetNumStates() == 0)
-        throw std::invalid_argument("ChActuatorDynamics: stateful model required");
-    ChExternalDynamicsODE::Initialize();
 }
 
 ChActuatorDynamics::ChActuatorDynamics(std::shared_ptr<ActuatorModel> model,
@@ -46,9 +43,20 @@ ChActuatorDynamics::ChActuatorDynamics(std::shared_ptr<ActuatorModel> model,
     : model_(std::move(model)), envelope_(envelope), attached_(false) {
     if (!model_)
         throw std::invalid_argument("ChActuatorDynamics: model must not be null");
+}
+
+void ChActuatorDynamics::Initialize() {
+    if (!model_)
+        throw std::invalid_argument("ChActuatorDynamics: model must not be null");
     if (model_->GetNumStates() == 0)
         throw std::invalid_argument("ChActuatorDynamics: stateful model required");
+
     ChExternalDynamicsODE::Initialize();
+
+    if (attached_) {
+        m_Qforce.resize(12);
+        m_Qforce.setZero();
+    }
 }
 
 void ChActuatorDynamics::SetActuatorLength(double length, double velocity) {
@@ -60,24 +68,39 @@ void ChActuatorDynamics::FreezeCommand(const ActuatorCommand& command) {
     command_ = command;
 }
 
+ChActuatorDynamics::GeometryState ChActuatorDynamics::BuildGeometry() const {
+    GeometryState g;
+
+    if (!attached_) {
+        g.length = length_;
+        g.rate   = length_dot_;
+        return g;
+    }
+
+    g.p1 = local_ ? body1_->TransformPointLocalToParent(loc1_) : loc1_;
+    g.p2 = local_ ? body2_->TransformPointLocalToParent(loc2_) : loc2_;
+
+    const ChVector3d delta = g.p1 - g.p2;
+    g.length = delta.Length();
+    g.dir    = (g.length > 1e-12) ? delta / g.length : ChVector3d(1, 0, 0);
+
+    const ChVector3d l1_local = local_ ? loc1_ : body1_->TransformPointParentToLocal(loc1_);
+    const ChVector3d l2_local = local_ ? loc2_ : body2_->TransformPointParentToLocal(loc2_);
+    const ChVector3d v1       = body1_->PointSpeedLocalToParent(l1_local);
+    const ChVector3d v2       = body2_->PointSpeedLocalToParent(l2_local);
+    g.rate = g.dir.Dot(v1 - v2);
+
+    return g;
+}
+
 ActuatorState ChActuatorDynamics::BuildState(double time) const {
     ActuatorState s;
     s.time = time;
-    if (attached_) {
-        const ChVector3d p1 = local_ ? body1_->TransformPointLocalToParent(loc1_) : loc1_;
-        const ChVector3d p2 = local_ ? body2_->TransformPointLocalToParent(loc2_) : loc2_;
-        const ChVector3d d  = p2 - p1;
-        s.displacement = d.Length();
-        const ChVector3d dir = (s.displacement > 1e-12) ? d / s.displacement : ChVector3d(1, 0, 0);
-        const ChVector3d l1_local = local_ ? loc1_ : body1_->TransformPointParentToLocal(loc1_);
-        const ChVector3d l2_local = local_ ? loc2_ : body2_->TransformPointParentToLocal(loc2_);
-        const ChVector3d v1 = body1_->PointSpeedLocalToParent(l1_local);
-        const ChVector3d v2 = body2_->PointSpeedLocalToParent(l2_local);
-        s.velocity = dir.Dot(v2 - v1);
-    } else {
-        s.displacement = length_;
-        s.velocity     = length_dot_;
-    }
+
+    const GeometryState g = BuildGeometry();
+    s.displacement = g.length;
+    s.velocity     = g.rate;
+
     return s;
 }
 
@@ -110,14 +133,51 @@ void ChActuatorDynamics::Update(double time, UpdateFlags update_flags) {
     telemetry_ = telem;
 
     if (attached_) {
-        const ChVector3d p1 = local_ ? body1_->TransformPointLocalToParent(loc1_) : loc1_;
-        const ChVector3d p2 = local_ ? body2_->TransformPointLocalToParent(loc2_) : loc2_;
-        const ChVector3d d  = p2 - p1;
-        const double len = d.Length();
-        const ChVector3d dir = (len > 1e-12) ? d / len : ChVector3d(1, 0, 0);
-        body1_->AccumulateForce(-effort_ * dir, p1, false);
-        body2_->AccumulateForce( effort_ * dir, p2, false);
+        const GeometryState g = BuildGeometry();
+        const ChVector3d force = effort_ * g.dir;
+
+        const ChVector3d atorque1 = Vcross(g.p1 - body1_->GetPos(), force);
+        const ChVector3d ltorque1 = body1_->TransformDirectionParentToLocal(atorque1);
+        m_Qforce.segment(0, 3) = force.eigen();
+        m_Qforce.segment(3, 3) = ltorque1.eigen();
+
+        const ChVector3d atorque2 = Vcross(g.p2 - body2_->GetPos(), -force);
+        const ChVector3d ltorque2 = body2_->TransformDirectionParentToLocal(atorque2);
+        m_Qforce.segment(6, 3) = (-force).eigen();
+        m_Qforce.segment(9, 3) = ltorque2.eigen();
     }
+}
+
+void ChActuatorDynamics::IntLoadResidual_F(const unsigned int off, ChVectorDynamic<>& R, const double c) {
+    if (!IsActive())
+        return;
+
+    ChExternalDynamicsODE::IntLoadResidual_F(off, R, c);
+
+    if (!attached_)
+        return;
+
+    if (body1_->Variables().IsActive()) {
+        R.segment(body1_->Variables().GetOffset() + 0, 3) += c * m_Qforce.segment(0, 3);
+        R.segment(body1_->Variables().GetOffset() + 3, 3) += c * m_Qforce.segment(3, 3);
+    }
+
+    if (body2_->Variables().IsActive()) {
+        R.segment(body2_->Variables().GetOffset() + 0, 3) += c * m_Qforce.segment(6, 3);
+        R.segment(body2_->Variables().GetOffset() + 3, 3) += c * m_Qforce.segment(9, 3);
+    }
+}
+
+void ChActuatorDynamics::VariablesFbLoadForces(double factor) {
+    ChExternalDynamicsODE::VariablesFbLoadForces(factor);
+
+    if (!attached_)
+        return;
+
+    body1_->Variables().Force().segment(0, 3) += factor * m_Qforce.segment(0, 3);
+    body1_->Variables().Force().segment(3, 3) += factor * m_Qforce.segment(3, 3);
+    body2_->Variables().Force().segment(0, 3) += factor * m_Qforce.segment(6, 3);
+    body2_->Variables().Force().segment(3, 3) += factor * m_Qforce.segment(9, 3);
 }
 
 }  // namespace actuators
