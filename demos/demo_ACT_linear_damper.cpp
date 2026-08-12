@@ -2,6 +2,10 @@
 // demo_ACT_linear_damper
 //
 // PTO damper on a TSDA between two bodies. Reports absorbed power.
+//
+// Sign convention: power[W] is negative when the damper absorbs energy
+// (effort opposes velocity, i.e. F = -B*v → P = F*v < 0 for v > 0).
+// Total absorbed energy is the integral of |power| and is always positive.
 // =============================================================================
 
 #include <cmath>
@@ -45,7 +49,8 @@ int main() {
     const double dt = 1e-3;
     double total_energy = 0.0;
 
-    std::printf("%-10s  %-12s  %-12s  %-12s\n", "time[s]", "pos[m]", "vel[m/s]", "power[W]");
+    std::printf("%-10s  %-12s  %-12s  %-30s\n", "time[s]", "pos[m]", "vel[m/s]",
+                "power[W] (negative=absorbed)");
 
     for (int i = 0; i < 2000; ++i) {
         sys.DoStepDynamics(dt);
@@ -55,7 +60,7 @@ int main() {
         total_energy += std::abs(power) * dt;
 
         if (i % 200 == 0) {
-            std::printf("%-10.3f  %-12.4f  %-12.4f  %-12.2f\n",
+            std::printf("%-10.3f  %-12.4f  %-12.4f  %-30.2f\n",
                         sys.GetChTime(),
                         mass->GetPos().y(),
                         vel,

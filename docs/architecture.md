@@ -241,7 +241,39 @@ Using `ChExternalDynamicsODE` gives:
 
 Electrical inductance can make winding-current dynamics stiff. Small `L` with moderate `R` yields fast internal time constants that are poorly served by naïve explicit sub-stepping when the surrounding mechanics are integrated implicitly.
 
-### 8.3 Why mirror `ChHydraulicActuator`
+### 8.3 Solver requirement for stiff ODE models
+
+**Any `ChActuatorDynamics` instance whose model returns `IsStiff() == true` requires a direct solver and an implicit timestepper.**
+
+When `IsStiff()` is true, `ChExternalDynamicsODE::InjectKRMMatrices()` inserts a KRM block into the system descriptor. The default `ChSystemNSC` PSOR solver is an iterative VI solver (complementarity-based) that **cannot** consume KRM blocks. Attempting to run will abort with:
+
+```
+ChSolverPSOR: Can NOT use PSOR solver if the system includes stiffness or damping matrices
+```
+
+Required setup before `sys.Add(dyn)`:
+
+```cpp
+#include "chrono/solver/ChDirectSolverLS.h"
+#include "chrono/timestepper/ChTimestepperImplicit.h"
+
+auto solver = chrono_types::make_shared<ChSolverSparseLU>();  // or ChSolverSparseQR
+sys.SetSolver(solver);
+solver->UseSparsityPatternLearner(true);
+solver->LockSparsityPattern(true);
+solver->SetVerbose(false);
+
+sys.SetTimestepperType(ChTimestepper::Type::EULER_IMPLICIT);
+auto integrator = std::static_pointer_cast<ChTimestepperEulerImplicit>(sys.GetTimestepper());
+integrator->SetMaxIters(50);
+integrator->SetAbsTolerances(1e-4, 1e2);
+```
+
+Both `ChSolverSparseLU` and `ChSolverSparseQR` are available in the base Chrono distribution (no optional modules required), declared in `chrono/solver/ChDirectSolverLS.h`.
+
+Models with `GetNumStates() > 0` but `IsStiff() == false` do not trigger KRM injection and do not need this setup.
+
+### 8.4 Why mirror `ChHydraulicActuator`
 
 Chrono already contains a successful pattern for monolithically integrated actuator internals in `ChHydraulicActuator`. Matching that structure:
 

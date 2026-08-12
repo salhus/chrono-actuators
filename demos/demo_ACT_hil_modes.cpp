@@ -60,7 +60,10 @@ int main() {
     {
         const ActuatorCommand c = io.ReadCommand(0.5);
         const double out = io.ApplyOutputClamp(c.effort);
-        std::printf("  raw=%.1f  after_output_clamp=%.1f\n", c.effort, out);
+        // c.effort is the model-level clamped value (300 N → 200 N by model_effort_clamp=200).
+        // out is the final output after the independent output clamp (200 N → 150 N).
+        std::printf("  commanded=%.1f  after_model_clamp=%.1f  after_output_clamp=%.1f\n",
+                    cmd.effort, c.effort, out);
     }
 
     return 0;

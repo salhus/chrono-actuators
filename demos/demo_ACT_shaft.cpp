@@ -4,6 +4,14 @@
 // LinearDamperModel bound to a ChShaft driveline via ChActuatorShaft.
 // Demonstrates one model / many attachment types.
 //
+// shaft2 starts at 20 rad/s; the damper produces a braking torque proportional
+// to relative angular velocity.  The shaft decelerates to rest, showing
+// non-zero effort and the same model contract as the other bindings.
+//
+// Note: ActuatorCommand::enabled defaults to false (safe for HIL; silent
+// no-op in simulation if not set explicitly).  Always set enabled = true for
+// pure-simulation use.
+//
 // Note: ChActuatorShaft requires a zero-state model.  Stateful stiff models
 // (e.g. ElectricActuatorModel) must use ChActuatorDynamics for monolithic
 // integration with the Chrono system.  See demo_ACT_electric for that path.
@@ -31,6 +39,7 @@ int main() {
 
     auto shaft2 = chrono_types::make_shared<ChShaft>();
     shaft2->SetInertia(0.1);
+    shaft2->SetPosDt(20.0);  // initial angular velocity [rad/s]; damper decelerates from here
     sys.AddShaft(shaft2);
 
     auto motor_link = chrono_types::make_shared<ChShaftsMotorLoad>();
