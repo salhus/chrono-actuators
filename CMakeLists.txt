@@ -21,10 +21,7 @@ if(CMAKE_CXX_STANDARD LESS 20)
   message(STATUS "chrono-actuators: building with C++17 (C++20 preferred when available)")
 endif()
 
-find_package(Chrono CONFIG QUIET COMPONENTS ChronoEngine)
-if(NOT Chrono_FOUND)
-  find_package(Chrono REQUIRED CONFIG)
-endif()
+find_package(Chrono REQUIRED CONFIG)
 
 add_subdirectory(src)
 

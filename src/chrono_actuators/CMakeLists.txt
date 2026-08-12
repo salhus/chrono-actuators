@@ -36,7 +36,7 @@ if(CHRONO_ACTUATORS_CHRONO_CORE_TARGET STREQUAL "")
   message(FATAL_ERROR "Could not locate Chrono core target (tried Chrono_core, Chrono::Chrono_core, Chrono::Chrono)")
 endif()
 
-target_link_libraries(Chrono_actuators PUBLIC ${CHRONO_ACTUATORS_CHRONO_CORE_TARGET})
+target_link_libraries(Chrono_actuators PUBLIC ${CHRONO_ACTUATORS_CHRONO_CORE_TARGET} atomic)
 target_compile_definitions(Chrono_actuators PRIVATE CH_API_COMPILE_ACTUATORS)
 
 target_include_directories(Chrono_actuators
