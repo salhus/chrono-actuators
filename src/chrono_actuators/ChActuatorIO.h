@@ -35,6 +35,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 
 #include "chrono_actuators/models/ActuatorModel.h"
 #include "chrono_actuators/models/Telemetry.h"
@@ -74,12 +75,11 @@ class ChActuatorIO {
         , seq_(0)
         , telem_seq_(0)
         , engaged_(false)
-        , engage_time_(-1.0)
-        , last_command_time_(-1.0) {
-        cmd_.effort   = 0.0;
-        cmd_.position = 0.0;
-        cmd_.velocity = 0.0;
-        cmd_.enabled  = false;
+        , engage_time_(-1.0) {
+        ActuatorCommand zero{};
+        std::memcpy(cmd_buf_, &zero, sizeof(zero));
+        ActuatorTelemetry tzero{};
+        std::memcpy(telem_buf_, &tzero, sizeof(tzero));
     }
 
     ~ChActuatorIO() {
@@ -92,13 +92,17 @@ class ChActuatorIO {
     // -------------------------------------------------------------------------
 
     /// Write a new command from hardware/ROS.  Wait-free.
+    ///
+    /// Payload is copied via memcpy through an unsigned-char buffer to avoid
+    /// the C++ data-race UB that would arise from concurrent access to a plain
+    /// (non-atomic) struct even when guarded by fences alone.
     void WriteCommand(const ActuatorCommand& cmd) noexcept {
         uint32_t s = seq_.load(std::memory_order_relaxed);
-        seq_.store(s + 1, std::memory_order_release);
+        seq_.store(s + 1, std::memory_order_release);   // odd = write in progress
         std::atomic_thread_fence(std::memory_order_release);
-        cmd_ = cmd;
+        std::memcpy(cmd_buf_, &cmd, sizeof(ActuatorCommand));
         std::atomic_thread_fence(std::memory_order_release);
-        seq_.store(s + 2, std::memory_order_release);
+        seq_.store(s + 2, std::memory_order_release);   // even = stable
         last_command_time_real_ = std::chrono::steady_clock::now();
     }
 
@@ -178,7 +182,7 @@ class ChActuatorIO {
         uint32_t s = telem_seq_.load(std::memory_order_relaxed);
         telem_seq_.store(s + 1, std::memory_order_release);
         std::atomic_thread_fence(std::memory_order_release);
-        telem_ = telem;
+        std::memcpy(telem_buf_, &telem, sizeof(ActuatorTelemetry));
         std::atomic_thread_fence(std::memory_order_release);
         telem_seq_.store(s + 2, std::memory_order_release);
     }
@@ -190,7 +194,7 @@ class ChActuatorIO {
             s0 = telem_seq_.load(std::memory_order_acquire);
             if (s0 & 1u)
                 continue;
-            t = telem_;
+            std::memcpy(&t, telem_buf_, sizeof(ActuatorTelemetry));
             std::atomic_thread_fence(std::memory_order_acquire);
             s1 = telem_seq_.load(std::memory_order_acquire);
         } while (s0 != s1);
@@ -209,7 +213,7 @@ class ChActuatorIO {
             s0  = seq_.load(std::memory_order_acquire);
             if (s0 & 1u)
                 continue;
-            out = cmd_;
+            std::memcpy(&out, cmd_buf_, sizeof(ActuatorCommand));
             std::atomic_thread_fence(std::memory_order_acquire);
             s1  = seq_.load(std::memory_order_acquire);
         } while (s0 != s1);
@@ -225,15 +229,18 @@ class ChActuatorIO {
 
     ActuatorIOPolicy policy_;
 
+    // Seqlock for command (writer = hardware/ROS thread).
+    // Payload stored in unsigned-char buffer so memcpy is the only access path
+    // — avoiding the C++ data-race UB of concurrent access to a plain struct.
     std::atomic<uint32_t> seq_;
-    ActuatorCommand       cmd_;
+    alignas(ActuatorCommand) unsigned char cmd_buf_[sizeof(ActuatorCommand)]{};
 
+    // Seqlock for telemetry (writer = physics thread).
     std::atomic<uint32_t> telem_seq_;
-    ActuatorTelemetry     telem_;
+    alignas(ActuatorTelemetry) unsigned char telem_buf_[sizeof(ActuatorTelemetry)]{};
 
     bool   engaged_;
     double engage_time_;
-    double last_command_time_;
 
     TimePoint last_command_time_real_{};
 };

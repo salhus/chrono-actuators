@@ -39,7 +39,9 @@ namespace actuators {
 /// consistent with Chrono's TSDA force sign convention.
 ///
 /// Invariant A is enforced by ComputeEffort being declared const on the model.
-/// This functor itself is const-correct: operator() takes a const this.
+/// The functor evaluate() is non-const to match the ChLinkTSDA::ForceFunctor
+/// base class signature, but it performs no mutation; all mutable state is
+/// limited to the telemetry cache.
 class ChApiActuators ChActuatorFunctorTSDA : public chrono::ChLinkTSDA::ForceFunctor {
   public:
     /// @param model    Zero-state ActuatorModel (GetNumStates() must be 0).

@@ -19,7 +19,7 @@
 #define CHRONO_ACTUATORS_CHRONO_SHAFT_H
 
 #include <memory>
-#include <vector>
+#include <stdexcept>
 
 #include "chrono/core/ChTypes.h"
 #include "chrono/functions/ChFunctionConst.h"
@@ -38,21 +38,31 @@ namespace actuators {
 /// Wraps an ActuatorModel and applies its output torque to a ChShaftsMotorTorque
 /// link once per step via Advance().  Use in driveline / powertrain topologies.
 ///
+/// Supports zero-state ActuatorModels only (GetNumStates() == 0).
+/// Stateful stiff models (e.g. ElectricActuatorModel) must be integrated
+/// monolithically with the Chrono system via ChActuatorDynamics.
+/// A runtime check enforces this invariant on construction.
+///
 /// Sign convention: positive effort drives the output shaft in the positive
 /// angular direction.
 class ChApiActuators ChActuatorShaft {
   public:
-    /// @param model   ActuatorModel (zero-state or stateful).
+    /// @param model   Zero-state ActuatorModel (GetNumStates() == 0 required).
     /// @param motor   Shaft motor link to drive.
+    /// @throws std::invalid_argument if model->GetNumStates() > 0.
     ChActuatorShaft(std::shared_ptr<ActuatorModel>      model,
                     std::shared_ptr<ChShaftsMotorTorque> motor,
                     const EnvelopeParams&                envelope = EnvelopeParams{})
         : model_(std::move(model))
         , motor_(std::move(motor))
         , envelope_(envelope)
-        , prev_effort_(0.0)
-        , states_(model_ ? model_->GetNumStates() : 0, 0.0)
-        , states_initialized_(false) {}
+        , prev_effort_(0.0) {
+        if (model_ && model_->GetNumStates() > 0)
+            throw std::invalid_argument(
+                "ChActuatorShaft: stateful models (GetNumStates() > 0) must use "
+                "ChActuatorDynamics for monolithic integration with the Chrono system. "
+                "Use a zero-state model or replace with ChActuatorDynamics.");
+    }
 
     /// Call once per accepted step.
     /// @param command   Frozen command for this step.
@@ -64,21 +74,7 @@ class ChApiActuators ChActuatorShaft {
         state.velocity     = motor_->GetMotorRot_dt();
         state.time         = sim_time;
 
-        if (!states_initialized_ && !states_.empty()) {
-            model_->SetInitialConditions(states_.data());
-            states_initialized_ = true;
-        }
-
-        double effort = 0.0;
-        if (states_.empty()) {
-            effort = model_->ComputeEffort(command, state);
-        } else {
-            std::vector<double> rhs(states_.size(), 0.0);
-            model_->CalculateRHS(sim_time, states_.data(), state, command, rhs.data());
-            for (std::size_t i = 0; i < states_.size(); ++i)
-                states_[i] += dt * rhs[i];
-            effort = model_->EffortFromStates(states_.data(), state);
-        }
+        double effort = model_->ComputeEffort(command, state);
 
         telemetry_ = ActuatorTelemetry{};
         effort = ApplyPureEnvelope(effort, state.velocity, envelope_, telemetry_);
@@ -97,8 +93,6 @@ class ChApiActuators ChActuatorShaft {
     std::shared_ptr<ChShaftsMotorTorque> motor_;
     EnvelopeParams                       envelope_;
     double                               prev_effort_;
-    std::vector<double>                  states_;
-    bool                                 states_initialized_;
     ActuatorTelemetry                    telemetry_;
 };
 

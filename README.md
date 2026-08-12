@@ -259,7 +259,7 @@ Chrono-backed integration coverage for TSDA functor:
 
 - `demo_ACT_linear_damper` — PTO damper on a TSDA with absorbed power reporting.
 - `demo_ACT_electric` — stateful electric actuator integrated through `ChActuatorDynamics`.
-- `demo_ACT_shaft` — same electric model applied to a shaft driveline.
+- `demo_ACT_shaft` — linear damper model applied to a shaft driveline via `ChActuatorShaft`.
 - `demo_ACT_hil_modes` — synthetic command source exercising watchdog, engage gate, ramp, and clamps without ROS.
 
 ## Downstream integration guidance

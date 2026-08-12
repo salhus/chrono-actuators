@@ -131,7 +131,13 @@ install(FILES
 if(CHRONO_ACTUATORS_ENABLE_ROS)
   find_package(chrono_ros QUIET)
   if(chrono_ros_FOUND)
-    add_subdirectory(ros)
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ros/CMakeLists.txt)
+      add_subdirectory(ros)
+    else()
+      message(STATUS
+        "chrono-actuators: CHRONO_ACTUATORS_ENABLE_ROS=ON and chrono_ros found, "
+        "but src/chrono_actuators/ros/CMakeLists.txt does not exist — ROS handler skipped")
+    endif()
   else()
     message(STATUS "chrono-actuators: chrono_ros not found — ROS handler skipped")
   endif()

@@ -1,8 +1,12 @@
 // =============================================================================
 // demo_ACT_shaft
 //
-// Same ElectricActuatorModel bound to a ChShaft driveline via ChActuatorShaft.
+// LinearDamperModel bound to a ChShaft driveline via ChActuatorShaft.
 // Demonstrates one model / many attachment types.
+//
+// Note: ChActuatorShaft requires a zero-state model.  Stateful stiff models
+// (e.g. ElectricActuatorModel) must use ChActuatorDynamics for monolithic
+// integration with the Chrono system.  See demo_ACT_electric for that path.
 // =============================================================================
 
 #include <cstdio>
@@ -13,7 +17,7 @@
 #include "chrono/physics/ChShaft.h"
 #include "chrono/physics/ChShaftsMotorTorque.h"
 #include "chrono_actuators/chrono/ChActuatorShaft.h"
-#include "chrono_actuators/models/ElectricActuatorModel.h"
+#include "chrono_actuators/models/LinearDamperModel.h"
 
 int main() {
     using namespace chrono;
@@ -33,20 +37,13 @@ int main() {
     motor_link->Initialize(shaft1, shaft2);
     sys.AddLink(motor_link);
 
-    ElectricActuatorParams p;
-    p.R               = 0.5;
-    p.L               = 5e-4;
-    p.Kt              = 0.15;
-    p.Ke              = 0.15;
-    p.gear_ratio      = 10.0;
-    p.gear_efficiency = 0.92;
-
-    auto model = std::make_shared<ElectricActuatorModel>(p);
+    // Zero-state damper: zero-state model, safe for ChActuatorShaft.
+    auto model = std::make_shared<LinearDamperModel>(0.05);
 
     ChActuatorShaft actuator(model, motor_link);
 
     ActuatorCommand cmd;
-    cmd.effort  = 0.5;
+    cmd.effort  = 0.0;  // damper effort is purely velocity-derived
     cmd.enabled = true;
 
     std::printf("%-10s  %-14s  %-12s\n", "time[s]", "shaft2_omega", "effort[N·m]");
