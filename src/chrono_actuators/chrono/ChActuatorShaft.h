@@ -24,7 +24,7 @@
 #include "chrono/core/ChTypes.h"
 #include "chrono/functions/ChFunctionConst.h"
 #include "chrono/physics/ChShaft.h"
-#include "chrono/physics/ChShaftsMotorTorque.h"
+#include "chrono/physics/ChShaftsMotorLoad.h"
 #include "chrono_actuators/ChApiActuators.h"
 #include "chrono_actuators/models/ActuatorModel.h"
 #include "chrono_actuators/models/Envelope.h"
@@ -35,7 +35,7 @@ namespace actuators {
 
 /// 1-D shaft motor adapter.
 ///
-/// Wraps an ActuatorModel and applies its output torque to a ChShaftsMotorTorque
+/// Wraps an ActuatorModel and applies its output torque to a ChShaftsMotorLoad
 /// link once per step via Advance().  Use in driveline / powertrain topologies.
 ///
 /// Supports zero-state ActuatorModels only (GetNumStates() == 0).
@@ -50,9 +50,9 @@ class ChApiActuators ChActuatorShaft {
     /// @param model   Zero-state ActuatorModel (GetNumStates() == 0 required).
     /// @param motor   Shaft motor link to drive.
     /// @throws std::invalid_argument if model->GetNumStates() > 0.
-    ChActuatorShaft(std::shared_ptr<ActuatorModel>      model,
-                    std::shared_ptr<ChShaftsMotorTorque> motor,
-                    const EnvelopeParams&                envelope = EnvelopeParams{})
+    ChActuatorShaft(std::shared_ptr<ActuatorModel>     model,
+                    std::shared_ptr<ChShaftsMotorLoad> motor,
+                    const EnvelopeParams&              envelope = EnvelopeParams{})
         : model_(std::move(model))
         , motor_(std::move(motor))
         , envelope_(envelope)
@@ -70,8 +70,8 @@ class ChApiActuators ChActuatorShaft {
     /// @param dt        Step size [s].
     void Advance(const ActuatorCommand& command, double sim_time, double dt) {
         ActuatorState state;
-        state.displacement = motor_->GetMotorRot();
-        state.velocity     = motor_->GetMotorRot_dt();
+        state.displacement = motor_->GetMotorPos();
+        state.velocity     = motor_->GetMotorPosDt();
         state.time         = sim_time;
 
         double effort = model_->ComputeEffort(command, state);
@@ -80,7 +80,7 @@ class ChApiActuators ChActuatorShaft {
         effort = ApplyPureEnvelope(effort, state.velocity, envelope_, telemetry_);
         effort = ApplyRateLimit(effort, prev_effort_, dt, envelope_.max_rate, telemetry_);
 
-        motor_->SetTorqueFunction(chrono_types::make_shared<ChFunctionConst>(effort));
+        motor_->SetLoadFunction(chrono_types::make_shared<ChFunctionConst>(effort));
 
         telemetry_.effort           = effort;
         telemetry_.mechanical_power = effort * state.velocity;
@@ -89,11 +89,11 @@ class ChApiActuators ChActuatorShaft {
     const ActuatorTelemetry& GetTelemetry() const { return telemetry_; }
 
   private:
-    std::shared_ptr<ActuatorModel>       model_;
-    std::shared_ptr<ChShaftsMotorTorque> motor_;
-    EnvelopeParams                       envelope_;
-    double                               prev_effort_;
-    ActuatorTelemetry                    telemetry_;
+    std::shared_ptr<ActuatorModel>      model_;
+    std::shared_ptr<ChShaftsMotorLoad> motor_;
+    EnvelopeParams                    envelope_;
+    double                            prev_effort_;
+    ActuatorTelemetry                 telemetry_;
 };
 
 }  // namespace actuators

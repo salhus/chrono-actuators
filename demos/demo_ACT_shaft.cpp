@@ -15,7 +15,7 @@
 #include "chrono/core/ChTypes.h"
 #include "chrono/physics/ChSystemNSC.h"
 #include "chrono/physics/ChShaft.h"
-#include "chrono/physics/ChShaftsMotorTorque.h"
+#include "chrono/physics/ChShaftsMotorLoad.h"
 #include "chrono_actuators/chrono/ChActuatorShaft.h"
 #include "chrono_actuators/models/LinearDamperModel.h"
 
@@ -33,7 +33,7 @@ int main() {
     shaft2->SetInertia(0.1);
     sys.AddShaft(shaft2);
 
-    auto motor_link = chrono_types::make_shared<ChShaftsMotorTorque>();
+    auto motor_link = chrono_types::make_shared<ChShaftsMotorLoad>();
     motor_link->Initialize(shaft1, shaft2);
     sys.AddLink(motor_link);
 
