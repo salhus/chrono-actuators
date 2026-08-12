@@ -25,7 +25,7 @@ Chrono's standard actuation primitives follow this ideal-effort pattern when use
 
 ### 1.2 Why Chrono
 
-Chrono is already the multibody engine in the target workflow, alongside the hydrodynamics path used for WEC studies. It also already contains one accepted example of this modeling pattern: `ChHydraulicActuator`, which wraps internal actuator state in `ChExternalDynamicsODE` and couples it back into the mechanical system.
+Chrono is already the multibody engine in the target workflow, alongside the HydroChrono-based hydrodynamics path used for WEC studies. It also already contains one accepted example of this modeling pattern: `ChHydraulicActuator`, which wraps internal actuator state in `ChExternalDynamicsODE` and couples it back into the mechanical system.
 
 This module generalizes that pattern to electrical and other actuator types. `ElectricActuatorModel` is the electromechanical analogue: the bus-voltage limit `V_bus` creates a real torque-speed characteristic, so the actuator has finite impedance instead of ideal effort output.
 
