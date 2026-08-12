@@ -17,6 +17,9 @@
 #include <iostream>
 #include <stdexcept>
 
+#include "chrono/physics/ChSystem.h"
+#include "chrono/solver/ChSolver.h"
+
 namespace chrono {
 namespace actuators {
 
@@ -51,26 +54,6 @@ void ChActuatorDynamics::Initialize() {
         throw std::invalid_argument("ChActuatorDynamics: model must not be null");
     if (model_->GetNumStates() == 0)
         throw std::invalid_argument("ChActuatorDynamics: stateful model required");
-
-    // Warn when a stiff model is initialized without a direct solver.
-    // The default ChSystemNSC PSOR solver is an iterative VI solver that cannot
-    // consume KRM blocks.  Stiff models (IsStiff() == true) cause
-    // ChExternalDynamicsODE::InjectKRMMatrices() to insert a KRM block, which
-    // will cause the PSOR solver to abort with a runtime_error.
-    //
-    // Required setup (call before sys.Add(this)):
-    //   auto solver = chrono_types::make_shared<ChSolverSparseLU>();   // or ChSolverSparseQR
-    //   sys.SetSolver(solver);
-    //   sys.SetTimestepperType(ChTimestepper::Type::EULER_IMPLICIT);
-    //
-    // See demos/demo_ACT_electric.cpp for a complete example.
-    if (model_->IsStiff()) {
-        std::cerr << "[ChActuatorDynamics] WARNING: model IsStiff() == true.\n"
-                  << "  The default ChSystemNSC PSOR solver cannot consume KRM blocks and will abort.\n"
-                  << "  Configure a direct solver (e.g. ChSolverSparseLU) and an implicit timestepper\n"
-                  << "  (e.g. ChTimestepper::Type::EULER_IMPLICIT) before calling sys.Add(this).\n"
-                  << "  See demos/demo_ACT_electric.cpp for the required setup pattern.\n";
-    }
 
     ChExternalDynamicsODE::Initialize();
 
@@ -141,6 +124,35 @@ bool ChActuatorDynamics::CalculateJac(double                   time,
 }
 
 void ChActuatorDynamics::Update(double time, UpdateFlags update_flags) {
+    // On the first Update() call, check whether the host system's solver can
+    // consume KRM blocks.  If the model is stiff (IsStiff() == true) and the
+    // solver is a known iterative VI solver (PSOR, PSSOR, BARZILAIBORWEIN, APGD,
+    // ADMM), those solvers cannot consume KRM blocks and the simulation will
+    // produce incorrect results or abort.  Emit the warning once and only when
+    // the combination is genuinely problematic.
+    if (!warned_ && model_->IsStiff()) {
+        warned_ = true;  // gate regardless of outcome; only one diagnostic per instance
+        if (ChSystem* sys = GetSystem()) {
+            using T = ChSolver::Type;
+            const T t = sys->GetSolver()->GetType();
+            const bool is_vi_iterative = (t == T::PSOR || t == T::PSSOR ||
+                                          t == T::BARZILAIBORWEIN ||
+                                          t == T::APGD || t == T::ADMM);
+            if (is_vi_iterative) {
+                std::cerr
+                    << "[ChActuatorDynamics] WARNING: model IsStiff() == true"
+                       " but the active solver cannot consume KRM blocks.\n"
+                    << "  Iterative VI solvers (PSOR, PSSOR, APGD, etc.) do not support stiff"
+                       " ODE Jacobians.\n"
+                    << "  Configure a direct solver and an implicit timestepper before sys.Add(this):\n"
+                    << "    auto solver = chrono_types::make_shared<ChSolverSparseLU>();\n"
+                    << "    sys.SetSolver(solver);\n"
+                    << "    sys.SetTimestepperType(ChTimestepper::Type::EULER_IMPLICIT);\n"
+                    << "  See demos/demo_ACT_electric.cpp for the complete setup pattern.\n";
+            }
+        }
+    }
+
     ChExternalDynamicsODE::Update(time, update_flags);
 
     const auto& y = GetStates();

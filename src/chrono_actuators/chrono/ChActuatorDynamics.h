@@ -50,9 +50,9 @@ namespace actuators {
 /// **Solver requirement for stiff models**
 /// If the model's `IsStiff()` returns true (e.g. `ElectricActuatorModel`),
 /// `ChExternalDynamicsODE::InjectKRMMatrices()` inserts a KRM block into the
-/// system descriptor.  The default `ChSystemNSC` PSOR solver is an iterative
-/// VI solver that **cannot** consume KRM blocks and will abort with a
-/// `std::runtime_error`.  Before calling `sys.Add(this)`, configure:
+/// system descriptor.  Iterative VI solvers (the default `ChSystemNSC` PSOR
+/// solver, PSSOR, APGD, etc.) cannot consume KRM blocks.  Before calling
+/// `sys.Add(this)`, configure a direct solver and an implicit timestepper:
 /// @code{.cpp}
 ///   auto solver = chrono_types::make_shared<ChSolverSparseLU>(); // or ChSolverSparseQR
 ///   sys.SetSolver(solver);
@@ -60,6 +60,8 @@ namespace actuators {
 ///   solver->LockSparsityPattern(true);
 ///   sys.SetTimestepperType(ChTimestepper::Type::EULER_IMPLICIT);
 /// @endcode
+/// If a stiff model is paired with an incompatible iterative solver, a
+/// diagnostic is emitted once on the first simulation step.
 /// This requirement does not apply to zero-state or non-stiff models.
 ///
 /// Call Initialize() explicitly after construction and before adding this item
@@ -156,6 +158,8 @@ class ChApiActuators ChActuatorDynamics : public chrono::ChExternalDynamicsODE {
     double            effort_{0.0};
     ActuatorTelemetry telemetry_;
     ChVectorDynamic<> m_Qforce;
+
+    bool warned_{false};  ///< emitted the solver-capability warning at most once
 };
 
 }  // namespace actuators
