@@ -1,21 +1,22 @@
 # chrono-actuators
 
-`chrono-actuators` is a full actuator module rewrite for Project Chrono that cleanly separates:
+`chrono-actuators` is a standalone, BSD-licensed actuator library that integrates with Project Chrono.  It separates three concerns that should not be coupled:
 
-- a **Chrono-free model layer** for actuator physics and power conversion,
-- a **hardware/HIL edge** for non-blocking command and telemetry exchange, and
-- a **Chrono binding layer** for TSDA, RSDA, motor-function, shaft, and monolithic ODE integration paths.
+- a **Chrono-free model layer** (`models/`) — pure physics in C++ stdlib; no Chrono, no ROS; runs in simulations, HIL loops, and unit tests equally,
+- a **hardware/HIL edge** (`ChActuatorIO`) — non-blocking seqlock command/telemetry exchange, watchdog, engage gate, ramp-in, and
+- a **Chrono binding layer** — TSDA, RSDA, motor-function, shaft, and monolithic ODE integration paths that attach the models to a Chrono simulation.
 
-The module is aimed at simulation, controls prototyping, HIL, and downstream PTO / driveline integration where sign discipline, re-query safety, and stiff internal dynamics matter.
+The library solves a concrete problem: actuators modelled as prescribed forces are ideal effort sources — they deliver commanded force regardless of velocity, cannot saturate, and have no output impedance.  This corrupts any simulation where the actuator is the power conversion path and any control law tuned against it.  The library replaces that pattern with models that have real torque-speed characteristics and internal state.
 
-## Design goals
+Wave energy converter PTO modelling (replacing WEC-Sim's prescribed-force elements with real actuator dynamics) is the first validation case.  The library is domain-neutral; the same models apply to any effort-producing actuator.
 
-- **Chrono-free model code** for portability and unit testing.
-- **Explicit sign conventions** at every boundary.
-- **Safe zero-state bindings** for algebraic models repeatedly queried by implicit solvers.
-- **Monolithic integration** for stateful electrical or hydraulic dynamics.
-- **Deterministic async I/O** using a seqlock-based command exchange instead of blocking mutex paths.
-- **Thin downstream shims** instead of embedding application-specific polarity inversions or middleware assumptions.
+## Design priorities
+
+1. **Portability** — the `models/` layer stays dependency-free (C++ stdlib only; no Chrono, no ROS).  The same model runs inside Chrono, inside a HIL loop against hardware, and in unit tests without a simulation engine present.
+2. **Performance** — the physics hot path is non-blocking; quasi-static electrical behaviour by default, stiff ODE path only when explicitly declared.
+3. **ROS-legibility** — designed toward `ros2_control` conventions for the later, optional ROS layer.
+
+ROS and HIL support are optional and off by default.  Enabling one does not require the other.
 
 ## Repository layout
 
@@ -158,7 +159,7 @@ The terminal voltage `V` is saturated at `±V_bus` (the DC bus limit).  This giv
 - **Unsaturated** (bus has headroom): back-EMF feedforward delivers the commanded effort with only the first-order current-loop lag.
 - **Saturated** (`Ke*omega_motor → V_bus`): current falls as `i = (V_bus − Ke·ω)/R`; effort droops to zero at the no-load speed `V_bus / (Ke·N)`.
 
-This makes `ElectricActuatorModel` a two-port transducer with finite output impedance, unlike ideal effort sources (`ChLinkMotorLinearForce`, `ChShaftsMotorLoad`) which impose effort at any speed with zero impedance.
+This makes `ElectricActuatorModel` a two-port transducer with finite output impedance: effort droops with speed and the actuator cannot deliver power at arbitrary velocity.
 
 Key features:
 

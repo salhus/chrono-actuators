@@ -1,24 +1,18 @@
 # chrono-actuators architecture
 
-This document describes the rewritten architecture of `chrono-actuators` and the reasoning behind its API boundaries.
+This document describes the architecture of `chrono-actuators` and the reasoning behind its design boundaries.
 
 ## 1. Problem statement
 
-Actuator models sit at the intersection of three concerns:
+An actuator modelled as a prescribed force is an ideal effort source: it delivers commanded effort regardless of velocity, has no output impedance, cannot saturate, cannot be back-driven, and has no efficiency asymmetry between quadrants.  Wherever the actuator is the power conversion path — a PTO in a wave energy converter, a joint drive in a robot arm, a linear actuator in a test rig — that idealisation corrupts the quantity being computed and any control law tuned against it.
 
-1. **physics-layer integration** with Chrono,
-2. **model-layer portability** for controls, HIL, and unit testing, and
-3. **I/O-layer safety** for asynchronous command sources.
+`chrono-actuators` replaces the ideal-effort-source pattern with actuator models that have real torque-speed characteristics, finite output impedance, and internal state.  The library is domain-neutral: the same models apply to marine PTO, robotic joints, and any other effort-producing actuator.  Wave energy converter PTO modelling (replacing WEC-Sim's prescribed-force and damping elements) is the first validation case; it is not the library's identity.
 
-The rewrite separates those concerns explicitly so each can be verified independently.
+The implementation separates three concerns that should not be coupled:
 
-### What this module adds over existing Chrono actuation primitives
-
-Chrono's standard actuation primitives (`ChLinkMotorLinearForce`, `ChShaftsMotorLoad`, `ChLinkTSDA` force functors) are **ideal effort sources with zero output impedance**: they impose a force or torque and accept whatever velocity the multibody solve produces.  The load cannot push back through them and there is no torque-speed droop.
-
-`ChHydraulicActuator` is the existing exception — a genuine multiport model with internal pressure-volume state and real impedance.
-
-`ElectricActuatorModel` is its electromechanical counterpart.  The DC bus voltage limit `V_bus` is the concrete mechanism: once `Ke·ω_motor` consumes the available bus headroom, terminal voltage saturates, current falls, and effort droops to zero at the no-load speed.  The actuator cannot deliver infinite power at arbitrary speed — it is a two-port transducer, not an ideal effort source.  This symmetry with `ChHydraulicActuator` is the module's upstream argument.
+1. **Physics** — what the actuator does, expressed in C++ stdlib with no dependency on any simulation engine.
+2. **Chrono integration** — how the physics couples into a multibody simulation.
+3. **Hardware edge** — how commands and telemetry flow between the simulation and an async source (device driver, ROS node, HIL controller).
 
 ---
 
@@ -43,23 +37,29 @@ async command source / device / ROS / HIL
                 via TSDA / RSDA / motor-function adapters
 ```
 
-### 2.1 Model layer
+### 2.1 Model layer (`models/`)
 
-Files in `src/chrono_actuators/models/` are **Chrono-free**. They depend only on the standard library and define:
+Files in `src/chrono_actuators/models/` are **Chrono-free** — they depend only on the C++ standard library.  The reason is concrete: the same model must run inside a Chrono simulation, inside a HIL loop against physical hardware, and inside unit tests with no multibody engine present.  A dependency on `ChSystem` would make the second and third impossible.
 
-- command/state PODs,
-- the base model contract,
+Model-layer files define:
+
+- command/state PODs (`ActuatorCommand`, `ActuatorState`),
+- the base model contract (`ActuatorModel`),
 - telemetry and envelope helpers,
 - concrete reusable actuator models.
 
-### 2.2 Hardware edge
+This boundary is enforced structurally: `test_model_layer.cpp` is compiled without Chrono on the include path.
 
-`ChActuatorIO.h` is also Chrono-free. It owns:
+### 2.2 Hardware edge (`ChActuatorIO`)
+
+`ChActuatorIO.h` is also Chrono-free.  It is the boundary between the simulation and any async command source — a hardware device driver, a ROS node, or a HIL controller.  The hot path is non-blocking: reads and writes use a seqlock over `std::atomic<uint32_t>` rather than a mutex or an `std::atomic<T>` over the full payload (atomics wider than the platform's lock-free width fall back to a global lock table).
+
+`ChActuatorIO` owns:
 
 - seqlock command and telemetry exchange,
-- watchdog logic,
+- watchdog for bounded command staleness,
 - engage/disengage gating,
-- ramp-in,
+- ramp-in on re-engage,
 - independent clamp policy.
 
 ### 2.3 Chrono binding layer
@@ -281,41 +281,18 @@ Both `ChSolverSparseLU` and `ChSolverSparseQR` are available in the base Chrono 
 
 Models with `GetNumStates() > 0` but `IsStiff() == false` do not trigger KRM injection and do not need this setup.
 
-### 8.4 Why mirror `ChHydraulicActuator`
-
-Chrono already contains a successful pattern for monolithically integrated actuator internals in `ChHydraulicActuator`. Matching that structure:
-
-- aligns with Chrono conventions,
-- reduces conceptual surprise for Chrono developers,
-- gives a path for future hydraulic and electro-hydraulic expansion.
-
 ---
 
-## 9. Why keep the module in-process
+## 9. Sign conventions and downstream integration
 
-The rewrite intentionally keeps the default execution model in-process instead of turning every actuator evaluation into an RPC or co-simulation call.
-
-Reasons:
-
-1. **solver semantics** — functors and ODE callbacks must be callable many times per step with low latency;
-2. **determinism** — in-process evaluation avoids scheduling and transport jitter in the core loop;
-3. **Jacobian participation** — stateful models need direct access to Chrono's monolithic integration path;
-4. **portability** — the model layer remains engine-neutral without becoming transport-dependent.
-
-External transports still exist, but they stop at the `ChActuatorIO` boundary.
-
----
-
-## 10. Sign conventions and downstream integration
-
-### 10.1 Canonical convention
+### 9.1 Canonical convention
 
 The repository uses:
 
 - positive force = extension direction,
 - positive torque = positive-angle direction.
 
-### 10.2 PTO / extraction interpretation
+### 9.2 PTO / extraction interpretation
 
 Power-extracting devices like dampers often oppose motion, so they naturally produce:
 
@@ -324,7 +301,7 @@ Power-extracting devices like dampers often oppose motion, so they naturally pro
 
 That is not a contradiction; it is the intended physics under the canonical sign convention.
 
-### 10.3 Downstream inversion rule
+### 9.3 Downstream inversion rule
 
 If a downstream system defines positive force differently, **invert at the downstream boundary only**.
 
@@ -338,9 +315,9 @@ This rule keeps:
 
 ---
 
-## 11. Included models in the rewrite
+## 10. Included models in the rewrite
 
-### 11.1 `LinearDamperModel`
+### 10.1 `LinearDamperModel`
 
 A zero-state PTO baseline:
 
@@ -348,7 +325,7 @@ A zero-state PTO baseline:
 F = -B*v
 ```
 
-### 11.2 `ReactiveDamperModel`
+### 10.2 `ReactiveDamperModel`
 
 A zero-state reactive PTO:
 
@@ -356,7 +333,7 @@ A zero-state reactive PTO:
 F = -K*x - B*v
 ```
 
-### 11.3 `ElectricActuatorModel`
+### 10.3 `ElectricActuatorModel`
 
 A one-state DC/BLDC actuator with:
 
@@ -396,13 +373,9 @@ where `N = gear_ratio = omega_motor / omega_output`.
 
 These are exposed as `GetStallEffort()` and `GetNoLoadSpeed()`.
 
-#### Relationship to `ChHydraulicActuator`
-
-`ChHydraulicActuator` is the existing Chrono class that already has genuine two-port (multiport) behavior with internal pressure-volume state.  `ElectricActuatorModel` is its electromechanical counterpart: both integrate actuator internal state simultaneously with the multibody system and both have a natural finite impedance.  The other Chrono actuation primitives (`ChLinkMotorLinearForce`, `ChShaftsMotorLoad`, `ChLinkTSDA` force functors) are ideal effort sources with zero output impedance — they impose force at any speed without droop.  This distinction is the module's upstream argument.
-
 ---
 
-## 12. Binding selection guide
+## 11. Binding selection guide
 
 | Model type | Preferred binding | Reason |
 |---|---|---|
@@ -414,7 +387,7 @@ These are exposed as `GetStallEffort()` and `GetNoLoadSpeed()`.
 
 ---
 
-## 13. Testing strategy
+## 12. Testing strategy
 
 The rewrite intentionally creates three test bands:
 
@@ -431,24 +404,24 @@ This split catches architecture regressions early without needing a full Chrono 
 
 ---
 
-## 14. Extension guidance
+## 13. Extension guidance
 
 Future contributors should follow these rules:
 
-### 14.1 Adding a new zero-state model
+### 13.1 Adding a new zero-state model
 
 - keep it Chrono-free,
 - keep `ComputeEffort` pure,
 - test it in `test_model_layer.cpp` or equivalent.
 
-### 14.2 Adding a new stateful model
+### 13.2 Adding a new stateful model
 
 - implement the ODE hooks in `ActuatorModel`,
 - declare stiffness honestly,
 - provide an analytic Jacobian when practical,
 - prefer `ChActuatorDynamics` over hidden explicit sub-stepping.
 
-### 14.3 Adding middleware integration
+### 13.3 Adding middleware integration
 
 - stop at `ChActuatorIO`,
 - never block the physics thread,
@@ -456,7 +429,7 @@ Future contributors should follow these rules:
 
 ---
 
-## 15. Summary
+## 14. Summary
 
 The rewrite is built around a small set of durable ideas:
 
