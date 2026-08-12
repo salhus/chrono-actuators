@@ -2,7 +2,20 @@
 // demo_ACT_electric
 //
 // ElectricActuatorModel via ChActuatorDynamics driving a body pair.
-// Demonstrates stiff-integration stability (IsStiff() == true).
+// Demonstrates stiff-integration stability (IsStiff() == true) and the
+// DC bus voltage limit that gives the model a real torque-speed characteristic.
+//
+// Two observable regimes:
+//   1. Unsaturated: while Ke*omega_motor < V_bus, the back-EMF feedforward
+//      keeps current pinned at the commanded value.  Effort is constant and
+//      the body accelerates at a = F/m.
+//   2. Saturated: once the motor back-EMF consumes the available bus voltage,
+//      current falls as i = (V_bus - Ke*omega)/R.  Effort droops and the
+//      body asymptotically approaches the motor no-load speed.
+//
+// V_bus is set to 6.0 V so the saturation knee falls well within the
+// simulated range (~1.5 m/s output shaft), making both regimes visible in
+// the printed table.
 //
 // REQUIREMENT: ElectricActuatorModel::IsStiff() returns true, so
 // ChActuatorDynamics inserts KRM blocks into the system descriptor.
@@ -62,9 +75,14 @@ int main() {
     p.Ke              = 0.2;
     p.gear_ratio      = 20.0;
     p.gear_efficiency = 0.9;
+    p.V_bus           = 6.0;   // low bus so knee at ~1.5 m/s output speed
     p.effort_max      = 10.0;
 
     auto model = std::make_shared<ElectricActuatorModel>(p);
+
+    // Print torque-speed endpoints so the reader can check the table asymptotes.
+    std::printf("Stall effort  = %.4f N  (at omega_out = 0)\n", model->GetStallEffort());
+    std::printf("No-load speed = %.4f m/s (output shaft asymptote)\n\n", model->GetNoLoadSpeed());
 
     // enabled must be set explicitly; default is false (safe for HIL, but
     // a silent no-op in pure simulation if forgotten).
@@ -86,11 +104,13 @@ int main() {
 
     // Print columns: time, position, velocity, winding current (state[0]), effort.
     // Positive effort → arm accelerates in +x direction.
-    // Steady-state current: i_ss = (V - Ke*ω) / R.  Effort: τ = Kt*i*N*η.
-    std::printf("%-10s  %-14s  %-12s  %-12s  %-12s\n",
+    // Unsaturated: current pinned, effort constant, velocity ramps linearly.
+    // Saturated: current falls as i = (V_bus - Ke*omega_motor)/R; effort droops;
+    // velocity approaches no-load speed asymptotically.
+    std::printf("%-10s  %-14s  %-14s  %-12s  %-12s\n",
                 "time[s]", "arm_pos_x[m]", "arm_vel_x[m/s]", "current[A]", "effort[N]");
 
-    for (int i = 0; i < 500; ++i) {
+    for (int i = 0; i < 1000; ++i) {
         sys.DoStepDynamics(1e-3);
         if (i % 50 == 0) {
             const auto& states = dyn->GetStates();

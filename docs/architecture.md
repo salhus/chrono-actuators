@@ -12,6 +12,14 @@ Actuator models sit at the intersection of three concerns:
 
 The rewrite separates those concerns explicitly so each can be verified independently.
 
+### What this module adds over existing Chrono actuation primitives
+
+Chrono's standard actuation primitives (`ChLinkMotorLinearForce`, `ChShaftsMotorLoad`, `ChLinkTSDA` force functors) are **ideal effort sources with zero output impedance**: they impose a force or torque and accept whatever velocity the multibody solve produces.  The load cannot push back through them and there is no torque-speed droop.
+
+`ChHydraulicActuator` is the existing exception — a genuine multiport model with internal pressure-volume state and real impedance.
+
+`ElectricActuatorModel` is its electromechanical counterpart.  The DC bus voltage limit `V_bus` is the concrete mechanism: once `Ke·ω_motor` consumes the available bus headroom, terminal voltage saturates, current falls, and effort droops to zero at the no-load speed.  The actuator cannot deliver infinite power at arbitrary speed — it is a two-port transducer, not an ideal effort source.  This symmetry with `ChHydraulicActuator` is the module's upstream argument.
+
 ---
 
 ## 2. Layering
@@ -354,12 +362,43 @@ A one-state DC/BLDC actuator with:
 
 - state `i` (winding current),
 - RHS `(V - R*i - Ke*omega) / L`,
-- quasi-static voltage command inversion,
+- DC bus voltage limit `V_bus` that gives the model a real torque-speed characteristic,
 - gear ratio and efficiency,
 - viscous and Coulomb friction,
 - current and effort clamping,
 - analytic Jacobian `-R/L`,
 - `IsStiff() == true`.
+
+#### Two operating regimes
+
+**Unsaturated** (`|Ke * omega_motor| < V_bus`):
+
+The back-EMF feedforward in `CommandToVoltage` exactly cancels the `- Ke * omega` term in the ODE RHS.  The commanded current — and therefore the commanded effort — is delivered with only the first-order winding-current lag.
+
+**Saturated** (`Ke * omega_motor → V_bus`):
+
+The terminal voltage is clamped at `V_bus`.  Current falls as:
+
+```text
+i = (V_bus - Ke * omega_motor) / R
+```
+
+This produces a real torque-speed droop and a finite no-load speed, making the model a two-port transducer with real output impedance.
+
+#### Torque-speed endpoints
+
+```text
+tau_stall    = Kt * (V_bus / R) * N * eta          (omega = 0, full bus voltage)
+omega_nl_out = V_bus / (Ke * N)                     (output shaft, zero load torque)
+```
+
+where `N = gear_ratio = omega_motor / omega_output`.
+
+These are exposed as `GetStallEffort()` and `GetNoLoadSpeed()`.
+
+#### Relationship to `ChHydraulicActuator`
+
+`ChHydraulicActuator` is the existing Chrono class that already has genuine two-port (multiport) behavior with internal pressure-volume state.  `ElectricActuatorModel` is its electromechanical counterpart: both integrate actuator internal state simultaneously with the multibody system and both have a natural finite impedance.  The other Chrono actuation primitives (`ChLinkMotorLinearForce`, `ChShaftsMotorLoad`, `ChLinkTSDA` force functors) are ideal effort sources with zero output impedance — they impose force at any speed without droop.  This distinction is the module's upstream argument.
 
 ---
 

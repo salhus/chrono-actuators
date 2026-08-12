@@ -12,21 +12,38 @@
 // Authors: chrono-actuators contributors
 // =============================================================================
 //
-// DC/BLDC electric actuator with electrical dynamics.
+// DC/BLDC electric actuator with electrical dynamics and DC bus voltage limit.
 //
 // State:  y[0] = winding current i [A]
 // ODE:    di/dt = (V - R*i - Ke*omega) / L
 //
-// where V   = commanded voltage derived from effort command
-//       omega = shaft angular velocity = state.velocity / gear_ratio
+// where omega = motor shaft angular velocity = state.velocity * gear_ratio
+//       N     = gear_ratio  (omega_motor / omega_output, N > 1 for speed reduction)
 //
-// Output torque:  tau = Kt * i * gear_ratio * eta_gear - B_vis * omega_out
-//                     - Fc * sign(omega_out)
-// clamped to [-tau_max, tau_max].
+// Voltage command (two-regime behavior):
 //
-// The quasi-static voltage command is:
-//   V = effort_cmd * R / Kt + Ke * omega  (current-loop approximation)
-// so that at DC steady state i = effort_cmd / Kt and tau ≈ effort_cmd.
+//   Unsaturated (|Ke*omega| < V_bus):
+//     V = clamp(R * i_des, -V_bus, V_bus) + Ke*omega  → bus has headroom,
+//     the back-EMF feedforward cancels the back-EMF term in the ODE, and the
+//     actuator delivers the commanded current (and thus effort) with only the
+//     first-order current-loop lag.
+//
+//   Saturated (Ke*omega → V_bus):
+//     V = V_bus  (clamped by the bus limit).
+//     Current falls as i = (V_bus - Ke*omega) / R, producing a real
+//     torque-speed droop.  This makes ElectricActuatorModel a two-port
+//     transducer with finite output impedance — unlike ideal effort sources
+//     such as ChLinkMotorLinearForce or ChShaftsMotorLoad, which impose effort
+//     at any speed with zero impedance.  ChHydraulicActuator is the existing
+//     Chrono class with the analogous property; ElectricActuatorModel is its
+//     electromechanical counterpart.
+//
+// Torque-speed endpoints:
+//   Stall effort (omega = 0):   tau_stall = Kt * (V_bus/R) * N * eta
+//   No-load speed (output shaft): omega_nl  = V_bus / (Ke * N)
+//
+// Output effort:  tau = Kt * i * N * eta - B_vis * omega_out - Fc * sign(omega_out)
+//                 clamped to [-effort_max, effort_max].
 //
 // Parameters are documented in SI units.  Parameterize to represent an
 // ODrive-driven bench actuator after hardware identification.
@@ -62,6 +79,7 @@ struct ElectricActuatorParams {
     double F_coulomb = 0.0;  ///< Coulomb friction at output shaft [N·m]
 
     // Limits
+    double V_bus       = 24.0;  ///< DC bus voltage limit [V]; bounds |V| and sets no-load speed
     double current_max = 1e30;  ///< peak current limit [A]
     double effort_max  = 1e30;  ///< peak output torque/force limit [N·m] or [N]
 
@@ -81,6 +99,8 @@ class ElectricActuatorModel : public ActuatorModel {
             throw std::invalid_argument("ElectricActuatorModel: inductance L must be > 0");
         if (p_.R <= 0.0)
             throw std::invalid_argument("ElectricActuatorModel: resistance R must be > 0");
+        if (p_.V_bus <= 0.0)
+            throw std::invalid_argument("ElectricActuatorModel: V_bus must be > 0");
         if (p_.gear_ratio <= 0.0)
             throw std::invalid_argument("ElectricActuatorModel: gear_ratio must be > 0");
         if (p_.gear_efficiency <= 0.0 || p_.gear_efficiency > 1.0)
@@ -88,6 +108,15 @@ class ElectricActuatorModel : public ActuatorModel {
     }
 
     const ElectricActuatorParams& GetParams() const { return p_; }
+
+    /// Stall effort at the output shaft (omega = 0, full bus voltage).
+    double GetStallEffort() const {
+        return p_.Kt * (p_.V_bus / p_.R) * p_.gear_ratio * p_.gear_efficiency;
+    }
+
+    /// No-load speed at the output shaft (zero load torque).
+    /// omega_motor_nl = V_bus / Ke; divide by gear_ratio (N = omega_motor / omega_output).
+    double GetNoLoadSpeed() const { return p_.V_bus / (p_.Ke * p_.gear_ratio); }
 
     // -------------------------------------------------------------------------
     // ActuatorModel interface
@@ -128,7 +157,11 @@ class ElectricActuatorModel : public ActuatorModel {
                       const ActuatorState&   /*state*/,
                       const ActuatorCommand& /*command*/,
                       double*                jac) const override {
-        // d(rhs[0])/d(y[0]) = -R/L
+        // d(rhs[0])/d(y[0]) = -R/L.
+        // This is exact in both the unsaturated and saturated regimes: V is
+        // derived from the effort command and omega (not from the state y[0]),
+        // so dV/di = 0 and the Jacobian reduces to -R/L regardless of whether
+        // the bus is saturated.  Do not add a saturation correction here.
         jac[0] = -p_.R / p_.L;
         return true;
     }
@@ -143,11 +176,16 @@ class ElectricActuatorModel : public ActuatorModel {
     }
 
   private:
-    /// Translate effort command (desired output torque) to motor voltage.
+    /// Translate effort command (desired output torque) to motor voltage,
+    /// saturated at the DC bus limit.  Below saturation the back-EMF feedforward
+    /// cancels the back-EMF term in the RHS and the command is delivered.  Once
+    /// Ke*omega consumes the available bus headroom, V clamps and the motor
+    /// exhibits a real torque-speed droop.
     double CommandToVoltage(double effort_cmd, double omega_motor) const {
         const double i_des = effort_cmd / (p_.Kt * p_.gear_ratio * p_.gear_efficiency);
-        return p_.R * std::clamp(i_des, -p_.current_max, p_.current_max)
-               + p_.Ke * omega_motor;
+        const double V_unsat = p_.R * std::clamp(i_des, -p_.current_max, p_.current_max)
+                               + p_.Ke * omega_motor;
+        return std::clamp(V_unsat, -p_.V_bus, p_.V_bus);
     }
 
     /// Compute output effort from motor current and output velocity.
