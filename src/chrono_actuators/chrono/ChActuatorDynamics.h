@@ -108,11 +108,11 @@ class ChApiActuators ChActuatorDynamics : public chrono::ChExternalDynamicsODE {
 
     void Update(double time, UpdateFlags update_flags) override;
 
+  private:
     void IntLoadResidual_F(const unsigned int off, ChVectorDynamic<>& R, const double c) override;
 
     void VariablesFbLoadForces(double factor = 1) override;
 
-  private:
     struct GeometryState {
         ChVector3d p1{0, 0, 0};
         ChVector3d p2{0, 0, 0};
