@@ -153,13 +153,35 @@ y[0] = i
 di/dt = (V - R*i - Ke*omega) / L
 ```
 
+The terminal voltage `V` is saturated at `±V_bus` (the DC bus limit).  This gives the model a **real torque-speed characteristic** with two regimes:
+
+- **Unsaturated** (bus has headroom): back-EMF feedforward delivers the commanded effort with only the first-order current-loop lag.
+- **Saturated** (`Ke*omega_motor → V_bus`): current falls as `i = (V_bus − Ke·ω)/R`; effort droops to zero at the no-load speed `V_bus / (Ke·N)`.
+
+This makes `ElectricActuatorModel` a two-port transducer with finite output impedance, unlike ideal effort sources (`ChLinkMotorLinearForce`, `ChShaftsMotorLoad`) which impose effort at any speed with zero impedance.
+
 Key features:
 
 - stiff declaration via `IsStiff() == true`,
-- analytic Jacobian `d(rhs)/d(y) = -R/L`,
+- analytic Jacobian `d(rhs)/d(y) = -R/L` (exact in both regimes),
 - output torque including gear efficiency and output friction,
 - current and effort clamping,
+- `GetStallEffort()` and `GetNoLoadSpeed()` accessors,
 - quasi-static `ComputeEffort` path plus full ODE path.
+
+Key parameters:
+
+| Parameter | Units | Meaning |
+|---|---|---|
+| `R` | Ω | winding resistance |
+| `L` | H | winding inductance (small → stiff ODE) |
+| `Kt` | N·m/A | torque constant |
+| `Ke` | V·s/rad | back-EMF constant |
+| `V_bus` | V | DC bus voltage limit; sets no-load speed and stall current |
+| `gear_ratio` | — | `N = omega_motor / omega_output` |
+| `gear_efficiency` | — | η ∈ (0, 1] |
+| `current_max` | A | peak current clamp |
+| `effort_max` | N·m or N | peak output effort clamp |
 
 ## Hardware/HIL edge
 

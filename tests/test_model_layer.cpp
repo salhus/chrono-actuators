@@ -234,8 +234,195 @@ static void test_electric_no_load_speed() {
 }
 
 // ---------------------------------------------------------------------------
-// Sign convention: functor sign is positive = extend
+// ElectricActuatorModel: unsaturated regime — commanded effort delivered
 // ---------------------------------------------------------------------------
+static void test_electric_unsaturated() {
+    ElectricActuatorParams p;
+    p.R               = 1.0;
+    p.L               = 1e-4;
+    p.Kt              = 0.2;
+    p.Ke              = 0.2;
+    p.gear_ratio      = 20.0;
+    p.gear_efficiency = 0.9;
+    p.V_bus           = 24.0;
+
+    ElectricActuatorModel model(p);
+
+    ActuatorCommand cmd;
+    cmd.effort  = 5.0;
+    cmd.enabled = true;
+
+    // At low speed the bus has ample headroom; commanded effort should be met.
+    ActuatorState state;
+    state.velocity = 0.1;  // output shaft — well inside unsaturated region
+
+    const double tau = model.ComputeEffort(cmd, state);
+    assert(std::abs(tau - 5.0) < 1e-4 && "Unsaturated: commanded effort delivered");
+}
+
+// ---------------------------------------------------------------------------
+// ElectricActuatorModel: saturated regime — effort follows torque-speed law
+// ---------------------------------------------------------------------------
+static void test_electric_saturated() {
+    ElectricActuatorParams p;
+    p.R               = 1.0;
+    p.L               = 1e-4;
+    p.Kt              = 0.2;
+    p.Ke              = 0.2;
+    p.gear_ratio      = 20.0;
+    p.gear_efficiency = 0.9;
+    p.V_bus           = 6.0;
+
+    ElectricActuatorModel model(p);
+
+    ActuatorCommand cmd;
+    cmd.effort  = 100.0;  // demand far more than the bus can deliver
+    cmd.enabled = true;
+
+    // At high speed, V_bus is saturated.
+    // omega_motor = omega_out * gear_ratio
+    // i = (V_bus - Ke * omega_motor) / R
+    // tau_expected = Kt * i * gear_ratio * gear_efficiency
+    ActuatorState state;
+    state.velocity = 1.0;  // output shaft [rad/s or m/s]
+
+    const double omega_motor = state.velocity * p.gear_ratio;
+    const double i_sat       = (p.V_bus - p.Ke * omega_motor) / p.R;
+    const double tau_expected = p.Kt * i_sat * p.gear_ratio * p.gear_efficiency;
+
+    const double tau = model.ComputeEffort(cmd, state);
+    assert(std::abs(tau - tau_expected) < 1e-4 && "Saturated: torque-speed law matches");
+}
+
+// ---------------------------------------------------------------------------
+// ElectricActuatorModel: stall effort matches GetStallEffort()
+// ---------------------------------------------------------------------------
+static void test_electric_stall_effort() {
+    ElectricActuatorParams p;
+    p.R               = 1.0;
+    p.L               = 1e-4;
+    p.Kt              = 0.2;
+    p.Ke              = 0.2;
+    p.gear_ratio      = 20.0;
+    p.gear_efficiency = 0.9;
+    p.V_bus           = 6.0;
+
+    ElectricActuatorModel model(p);
+
+    ActuatorCommand cmd;
+    cmd.effort  = 1000.0;  // command larger than bus can supply
+    cmd.enabled = true;
+
+    ActuatorState state;
+    state.velocity = 0.0;
+
+    const double tau         = model.ComputeEffort(cmd, state);
+    const double tau_stall   = model.GetStallEffort();
+    assert(std::abs(tau - tau_stall) < 1e-4 && "Stall: effort equals GetStallEffort()");
+}
+
+// ---------------------------------------------------------------------------
+// ElectricActuatorModel: at no-load speed, output effort ≈ 0
+// ---------------------------------------------------------------------------
+static void test_electric_no_load_accessor() {
+    ElectricActuatorParams p;
+    p.R               = 1.0;
+    p.L               = 1e-4;
+    p.Kt              = 0.2;
+    p.Ke              = 0.2;
+    p.gear_ratio      = 20.0;
+    p.gear_efficiency = 0.9;
+    p.V_bus           = 6.0;
+    // no friction terms — effort should approach zero at no-load speed
+
+    ElectricActuatorModel model(p);
+
+    const double omega_nl = model.GetNoLoadSpeed();
+
+    ActuatorCommand cmd;
+    cmd.effort  = 1000.0;  // demand more than bus can supply
+    cmd.enabled = true;
+
+    ActuatorState state;
+    state.velocity = omega_nl;
+
+    const double tau = model.ComputeEffort(cmd, state);
+    assert(std::abs(tau) < 1e-3 && "At no-load speed, output effort is ~0");
+}
+
+// ---------------------------------------------------------------------------
+// ElectricActuatorModel: effort decreases monotonically with speed
+// ---------------------------------------------------------------------------
+static void test_electric_monotonic_droop() {
+    ElectricActuatorParams p;
+    p.R               = 1.0;
+    p.L               = 1e-4;
+    p.Kt              = 0.2;
+    p.Ke              = 0.2;
+    p.gear_ratio      = 20.0;
+    p.gear_efficiency = 0.9;
+    p.V_bus           = 6.0;
+
+    ElectricActuatorModel model(p);
+
+    ActuatorCommand cmd;
+    cmd.effort  = 1000.0;  // always saturated
+    cmd.enabled = true;
+
+    double prev_tau = 1e30;
+    const double omega_nl = model.GetNoLoadSpeed();
+    for (int k = 0; k <= 10; ++k) {
+        ActuatorState state;
+        state.velocity = omega_nl * k / 10.0;
+        const double tau = model.ComputeEffort(cmd, state);
+        assert(tau <= prev_tau + 1e-9 && "Monotonic droop: effort must not increase with speed");
+        prev_tau = tau;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ElectricActuatorModel: Jacobian matches finite differences in saturated regime
+// ---------------------------------------------------------------------------
+static void test_electric_jacobian_saturated() {
+    ElectricActuatorParams p;
+    p.R               = 1.0;
+    p.L               = 2e-3;
+    p.Kt              = 0.2;
+    p.Ke              = 0.2;
+    p.gear_ratio      = 20.0;
+    p.gear_efficiency = 0.9;
+    p.V_bus           = 6.0;
+
+    ElectricActuatorModel model(p);
+
+    // High speed → bus is saturated
+    ActuatorCommand cmd;
+    cmd.effort  = 1000.0;
+    cmd.enabled = true;
+
+    ActuatorState state;
+    state.velocity = 1.2;  // omega_motor = 24, Ke*omega = 4.8 V < V_bus=6 (just below, but close)
+
+    const double y[1]   = {0.3};
+    double jac_analytic[1];
+    model.CalculateJac(0.0, y, state, cmd, jac_analytic);
+
+    const double expected = -p.R / p.L;
+    assert(std::abs(jac_analytic[0] - expected) < 1e-10 &&
+           "Saturated Jacobian is still -R/L");
+
+    // Confirm with finite difference
+    const double h = 1e-6;
+    const double y_h[1] = {y[0] + h};
+    double rhs0[1], rhsh[1];
+    model.CalculateRHS(0.0, y,   state, cmd, rhs0);
+    model.CalculateRHS(0.0, y_h, state, cmd, rhsh);
+    const double jac_fd = (rhsh[0] - rhs0[0]) / h;
+    assert(std::abs(jac_analytic[0] - jac_fd) < 1e-4 &&
+           "Saturated: analytic Jacobian matches finite difference");
+}
+
+
 static void test_sign_convention_linear_damper() {
     LinearDamperModel damper(100.0);
     ActuatorState s;
@@ -256,6 +443,12 @@ int main() {
     test_electric_steady_state();
     test_electric_jacobian();
     test_electric_no_load_speed();
+    test_electric_unsaturated();
+    test_electric_saturated();
+    test_electric_stall_effort();
+    test_electric_no_load_accessor();
+    test_electric_monotonic_droop();
+    test_electric_jacobian_saturated();
     test_sign_convention_linear_damper();
     return 0;
 }
