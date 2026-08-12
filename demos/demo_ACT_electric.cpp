@@ -3,6 +3,13 @@
 //
 // ElectricActuatorModel via ChActuatorDynamics driving a body pair.
 // Demonstrates stiff-integration stability (IsStiff() == true).
+//
+// REQUIREMENT: ElectricActuatorModel::IsStiff() returns true, so
+// ChActuatorDynamics inserts KRM blocks into the system descriptor.
+// ChSystemNSC's default PSOR solver is an iterative VI solver that cannot
+// consume KRM blocks and will abort.  A direct solver (ChSolverSparseLU or
+// ChSolverSparseQR) plus an implicit timestepper (EULER_IMPLICIT) is required
+// for any stiff model bound through ChActuatorDynamics.
 // =============================================================================
 
 #include <cstdio>
@@ -11,6 +18,8 @@
 #include "chrono/core/ChTypes.h"
 #include "chrono/physics/ChBody.h"
 #include "chrono/physics/ChSystemNSC.h"
+#include "chrono/solver/ChDirectSolverLS.h"
+#include "chrono/timestepper/ChTimestepperImplicit.h"
 #include "chrono_actuators/chrono/ChActuatorDynamics.h"
 #include "chrono_actuators/models/ElectricActuatorModel.h"
 
@@ -19,6 +28,23 @@ int main() {
     using namespace chrono::actuators;
 
     ChSystemNSC sys;
+
+    // -------------------------------------------------------------------------
+    // Stiff ODE solver setup
+    // ElectricActuatorModel::IsStiff() == true → ChActuatorDynamics injects a
+    // KRM block into the system descriptor.  The default PSOR iterative VI
+    // solver cannot consume KRM blocks; a direct sparse solver is required.
+    // -------------------------------------------------------------------------
+    auto solver = chrono_types::make_shared<ChSolverSparseLU>();
+    sys.SetSolver(solver);
+    solver->UseSparsityPatternLearner(true);
+    solver->LockSparsityPattern(true);
+    solver->SetVerbose(false);
+
+    sys.SetTimestepperType(ChTimestepper::Type::EULER_IMPLICIT);
+    auto integrator = std::static_pointer_cast<ChTimestepperEulerImplicit>(sys.GetTimestepper());
+    integrator->SetMaxIters(50);
+    integrator->SetAbsTolerances(1e-4, 1e2);
 
     auto ground = chrono_types::make_shared<ChBody>();
     ground->SetFixed(true);
@@ -40,6 +66,8 @@ int main() {
 
     auto model = std::make_shared<ElectricActuatorModel>(p);
 
+    // enabled must be set explicitly; default is false (safe for HIL, but
+    // a silent no-op in pure simulation if forgotten).
     ActuatorCommand cmd;
     cmd.effort  = 5.0;
     cmd.enabled = true;
@@ -56,14 +84,22 @@ int main() {
     dyn->FreezeCommand(cmd);
     sys.Add(dyn);
 
-    std::printf("%-10s  %-14s  %-12s\n", "time[s]", "arm_pos_x[m]", "effort[N]");
+    // Print columns: time, position, velocity, winding current (state[0]), effort.
+    // Positive effort → arm accelerates in +x direction.
+    // Steady-state current: i_ss = (V - Ke*ω) / R.  Effort: τ = Kt*i*N*η.
+    std::printf("%-10s  %-14s  %-12s  %-12s  %-12s\n",
+                "time[s]", "arm_pos_x[m]", "arm_vel_x[m/s]", "current[A]", "effort[N]");
 
     for (int i = 0; i < 500; ++i) {
         sys.DoStepDynamics(1e-3);
         if (i % 50 == 0) {
-            std::printf("%-10.3f  %-14.4f  %-12.4f\n",
+            const auto& states = dyn->GetStates();
+            const double current = (states.size() > 0) ? states[0] : 0.0;
+            std::printf("%-10.3f  %-14.4f  %-14.4f  %-12.4f  %-12.4f\n",
                         sys.GetChTime(),
                         arm->GetPos().x(),
+                        arm->GetPosDt().x(),
+                        current,
                         dyn->GetEffort());
         }
     }

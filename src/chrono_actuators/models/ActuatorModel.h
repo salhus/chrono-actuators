@@ -29,11 +29,16 @@ namespace actuators {
 
 /// Actuation intent.  Effort is the primary channel; position/velocity intent
 /// is advisory and consumed by an external control law only.
+///
+/// **Safety default:** `enabled` defaults to `false`.  This is intentional for
+/// the HIL/hardware path where fail-safe is required.  For pure-simulation use,
+/// always set `cmd.enabled = true` explicitly — forgetting it silently produces
+/// zero effort with no error.
 struct ActuatorCommand {
     double effort   = 0.0;   ///< commanded force [N] or torque [N·m]
     double position = 0.0;   ///< advisory position/angle setpoint [m] or [rad]
     double velocity = 0.0;   ///< advisory velocity setpoint [m/s] or [rad/s]
-    bool   enabled  = false; ///< actuator enabled flag
+    bool   enabled  = false; ///< actuator enabled flag (default false = fail-safe for HIL)
 };
 
 /// Measured/derived actuator kinematic state at evaluation time.

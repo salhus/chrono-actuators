@@ -47,6 +47,21 @@ namespace actuators {
 /// multibody system — no external sub-stepping, no stability issues with
 /// stiff electrical/hydraulic dynamics.
 ///
+/// **Solver requirement for stiff models**
+/// If the model's `IsStiff()` returns true (e.g. `ElectricActuatorModel`),
+/// `ChExternalDynamicsODE::InjectKRMMatrices()` inserts a KRM block into the
+/// system descriptor.  The default `ChSystemNSC` PSOR solver is an iterative
+/// VI solver that **cannot** consume KRM blocks and will abort with a
+/// `std::runtime_error`.  Before calling `sys.Add(this)`, configure:
+/// @code{.cpp}
+///   auto solver = chrono_types::make_shared<ChSolverSparseLU>(); // or ChSolverSparseQR
+///   sys.SetSolver(solver);
+///   solver->UseSparsityPatternLearner(true);
+///   solver->LockSparsityPattern(true);
+///   sys.SetTimestepperType(ChTimestepper::Type::EULER_IMPLICIT);
+/// @endcode
+/// This requirement does not apply to zero-state or non-stiff models.
+///
 /// Call Initialize() explicitly after construction and before adding this item
 /// to a ChSystem. This mirrors Chrono's ChHydraulicActuatorBase and avoids a
 /// virtual call to GetNumStates() during base-class construction.

@@ -14,6 +14,7 @@
 
 #include "chrono_actuators/chrono/ChActuatorDynamics.h"
 
+#include <iostream>
 #include <stdexcept>
 
 namespace chrono {
@@ -50,6 +51,26 @@ void ChActuatorDynamics::Initialize() {
         throw std::invalid_argument("ChActuatorDynamics: model must not be null");
     if (model_->GetNumStates() == 0)
         throw std::invalid_argument("ChActuatorDynamics: stateful model required");
+
+    // Warn when a stiff model is initialized without a direct solver.
+    // The default ChSystemNSC PSOR solver is an iterative VI solver that cannot
+    // consume KRM blocks.  Stiff models (IsStiff() == true) cause
+    // ChExternalDynamicsODE::InjectKRMMatrices() to insert a KRM block, which
+    // will cause the PSOR solver to abort with a runtime_error.
+    //
+    // Required setup (call before sys.Add(this)):
+    //   auto solver = chrono_types::make_shared<ChSolverSparseLU>();   // or ChSolverSparseQR
+    //   sys.SetSolver(solver);
+    //   sys.SetTimestepperType(ChTimestepper::Type::EULER_IMPLICIT);
+    //
+    // See demos/demo_ACT_electric.cpp for a complete example.
+    if (model_->IsStiff()) {
+        std::cerr << "[ChActuatorDynamics] WARNING: model IsStiff() == true.\n"
+                  << "  The default ChSystemNSC PSOR solver cannot consume KRM blocks and will abort.\n"
+                  << "  Configure a direct solver (e.g. ChSolverSparseLU) and an implicit timestepper\n"
+                  << "  (e.g. ChTimestepper::Type::EULER_IMPLICIT) before calling sys.Add(this).\n"
+                  << "  See demos/demo_ACT_electric.cpp for the required setup pattern.\n";
+    }
 
     ChExternalDynamicsODE::Initialize();
 

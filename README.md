@@ -196,6 +196,23 @@ These are for algebraic models only. They depend on **Invariant A** being satisf
 - solver-controlled step sizes,
 - no external sub-stepping split.
 
+> **Solver requirement for stiff models:** If the model's `IsStiff()` returns `true` (e.g. `ElectricActuatorModel`), the default `ChSystemNSC` PSOR solver will abort. Any model with `GetNumStates() > 0` and `IsStiff() == true` **requires** a direct solver and an implicit timestepper before calling `sys.Add(dyn)`:
+>
+> ```cpp
+> #include "chrono/solver/ChDirectSolverLS.h"
+> #include "chrono/timestepper/ChTimestepperImplicit.h"
+>
+> auto solver = chrono_types::make_shared<ChSolverSparseLU>();
+> sys.SetSolver(solver);
+> solver->UseSparsityPatternLearner(true);
+> solver->LockSparsityPattern(true);
+> sys.SetTimestepperType(ChTimestepper::Type::EULER_IMPLICIT);
+> ```
+>
+> See `demos/demo_ACT_electric.cpp` for the complete pattern.
+
+> **Note on `ActuatorCommand::enabled`:** This flag defaults to `false` (fail-safe for HIL). Always set `cmd.enabled = true` explicitly for pure-simulation use — forgetting it silently produces zero effort.
+
 ### Shaft binding
 
 `ChActuatorShaft` applies model output to a `ChShaftsMotorTorque` link for driveline and 1-D shaft topologies.
