@@ -1,12 +1,12 @@
 # chrono-actuators
 
-`chrono-actuators` is a full actuator module rewrite for Project Chrono that cleanly separates:
+`chrono-actuators` is an actuator module for Project Chrono aimed at two specific jobs: replacing prescribed-force PTO models in wave energy converter studies with actuator models that have real internal dynamics, and using the same models at the hardware edge for HIL work. It cleanly separates:
 
 - a **Chrono-free model layer** for actuator physics and power conversion,
 - a **hardware/HIL edge** for non-blocking command and telemetry exchange, and
 - a **Chrono binding layer** for TSDA, RSDA, motor-function, shaft, and monolithic ODE integration paths.
 
-The module is aimed at simulation, controls prototyping, HIL, and downstream PTO / driveline integration where sign discipline, re-query safety, and stiff internal dynamics matter.
+The module is aimed at simulation, controls prototyping, WEC PTO / driveline integration, and HIL operation where sign discipline, re-query safety, internal saturation, and stiff actuator dynamics matter.
 
 ## Design goals
 

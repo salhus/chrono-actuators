@@ -2,23 +2,40 @@
 
 This document describes the rewritten architecture of `chrono-actuators` and the reasoning behind its API boundaries.
 
-## 1. Problem statement
+## 1. Motivation
 
-Actuator models sit at the intersection of three concerns:
+The module was built for two related jobs:
 
-1. **physics-layer integration** with Chrono,
-2. **model-layer portability** for controls, HIL, and unit testing, and
-3. **I/O-layer safety** for asynchronous command sources.
+1. **Wave-energy-converter PTO modeling.** In WEC-Sim, PTOs are commonly represented as prescribed force or damping elements. That is useful for controls studies, but it idealizes the power conversion path. The goal here is to replace that abstraction with actuator models that carry their own electrical or hydraulic state, torque-speed limits, saturation, and efficiency behavior inside a C++ multibody solver.
+2. **Hardware-in-the-loop operation.** The same actuator model also needs to run against a physical bench actuator, where command and telemetry exchange must be safe under asynchronous timing.
 
-The rewrite separates those concerns explicitly so each can be verified independently.
+### 1.1 The problem with prescribed-force PTOs
 
-### What this module adds over existing Chrono actuation primitives
+A PTO modeled as a prescribed force is an **ideal effort source**:
 
-Chrono's standard actuation primitives (`ChLinkMotorLinearForce`, `ChShaftsMotorLoad`, `ChLinkTSDA` force functors) are **ideal effort sources with zero output impedance**: they impose a force or torque and accept whatever velocity the multibody solve produces.  The load cannot push back through them and there is no torque-speed droop.
+- it delivers the commanded force regardless of velocity,
+- it has no output impedance,
+- it cannot saturate,
+- it cannot be back-driven,
+- and it cannot represent quadrant-dependent losses between generating and motoring operation.
 
-`ChHydraulicActuator` is the existing exception — a genuine multiport model with internal pressure-volume state and real impedance.
+For a WEC, that is not a side issue. The PTO is the power conversion path, so PTO idealization directly changes the absorbed-power estimate and any controller tuned against it.
 
-`ElectricActuatorModel` is its electromechanical counterpart.  The DC bus voltage limit `V_bus` is the concrete mechanism: once `Ke·ω_motor` consumes the available bus headroom, terminal voltage saturates, current falls, and effort droops to zero at the no-load speed.  The actuator cannot deliver infinite power at arbitrary speed — it is a two-port transducer, not an ideal effort source.  This symmetry with `ChHydraulicActuator` is the module's upstream argument.
+Chrono's standard actuation primitives follow this ideal-effort pattern when used as load applicators. `ChLinkMotorLinearForce` applies a time-function force, `ChShaftsMotorLoad` applies a time-function shaft load, and `ChLinkTSDA` force functors are repeatedly queried as algebraic constitutive laws. Those are the right tools for many problems, but they are not a substitute for actuator dynamics with internal state.
+
+### 1.2 Why Chrono
+
+Chrono is already the multibody engine in the target workflow, alongside the hydrodynamics path used for WEC studies. It also already contains one accepted example of this modeling pattern: `ChHydraulicActuator`, which wraps internal actuator state in `ChExternalDynamicsODE` and couples it back into the mechanical system.
+
+This module generalizes that pattern to electrical and other actuator types. `ElectricActuatorModel` is the electromechanical analogue: the bus-voltage limit `V_bus` creates a real torque-speed characteristic, so the actuator has finite impedance instead of ideal effort output.
+
+### 1.3 Relationship to existing Chrono facilities
+
+This is a consolidation and generalization effort, not a claim that Chrono cannot represent drivetrain impedance at all.
+
+Today, a 1-D drivetrain can be assembled from existing Chrono pieces such as `ChShaft`, `ChShaftsGear` or `ChShaftsGearbox`, `ChShaftsClutch`, and `ChShaftsMotorLoad`. Chrono's own vehicle powertrain code follows that route; for example, `ChManualTransmissionShafts` builds a transmission out of shafts, a clutch, and a gearbox.
+
+What that route does **not** provide is a uniform actuator abstraction that also reaches TSDA/RSDA bindings and link motors, with shared command semantics, saturation policy, quadrant efficiency, telemetry, and hardware-edge safety behavior. This module is meant to collect those concerns in one place while still fitting Chrono's existing solver and binding patterns.
 
 ---
 
@@ -52,6 +69,8 @@ Files in `src/chrono_actuators/models/` are **Chrono-free**. They depend only on
 - telemetry and envelope helpers,
 - concrete reusable actuator models.
 
+This layer is Chrono-free on purpose: the same model must run inside Chrono, inside a HIL loop, and inside unit tests without requiring a multibody system.
+
 ### 2.2 Hardware edge
 
 `ChActuatorIO.h` is also Chrono-free. It owns:
@@ -61,6 +80,8 @@ Files in `src/chrono_actuators/models/` are **Chrono-free**. They depend only on
 - engage/disengage gating,
 - ramp-in,
 - independent clamp policy.
+
+This layer exists because a simulation driving physical hardware needs explicit engagement, bounded staleness, bounded rate of change, and torn-read-free command/state exchange. Keeping that machinery outside the model layer lets the same actuator physics run unchanged in pure simulation and on a bench.
 
 ### 2.3 Chrono binding layer
 
@@ -98,7 +119,7 @@ They must expose a **pure** function:
 double ComputeEffort(const ActuatorCommand&, const ActuatorState&) const;
 ```
 
-These models are safe to bind through Chrono force/torque functors because Chrono may re-query them multiple times at the same time and configuration.
+These models are safe to bind through Chrono force/torque functors because implicit integrators may re-query them multiple times, including at perturbed states during residual and Jacobian assembly. The evaluation therefore has to remain pure.
 
 ### 3.2 Contract B: stateful ODE models
 
@@ -122,7 +143,7 @@ They must additionally provide:
 - stiffness declaration,
 - effort extraction from the integrated state.
 
-These models should **not** be hidden behind an algebraic force functor. They must be integrated as part of the Chrono system through `ChActuatorDynamics`.
+These models should **not** be hidden behind an algebraic force functor. They must be integrated as part of the Chrono system through `ChActuatorDynamics`, which delegates state integration to `ChExternalDynamicsODE`. When `IsStiff() == true`, that path also requires a direct solver and an implicit timestepper so the inserted KRM block can be handled correctly.
 
 ---
 

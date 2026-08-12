@@ -138,6 +138,7 @@ class ChApiActuators ChActuatorDynamics : public chrono::ChExternalDynamicsODE {
 
     GeometryState BuildGeometry() const;
     ActuatorState BuildState(double time) const;
+    void MaybeWarnUnsupportedStiffSolver();
 
     std::shared_ptr<ActuatorModel> model_;
     EnvelopeParams                 envelope_;
@@ -156,6 +157,7 @@ class ChApiActuators ChActuatorDynamics : public chrono::ChExternalDynamicsODE {
     double            effort_{0.0};
     ActuatorTelemetry telemetry_;
     ChVectorDynamic<> m_Qforce;
+    bool              warned_{false};
 };
 
 }  // namespace actuators
